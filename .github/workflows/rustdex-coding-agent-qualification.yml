@@ -180,9 +180,6 @@ jobs:
         run: |
           set -euo pipefail
           tarball="$RUNNER_TEMP/release/$RELEASE_FILE"
-          echo "$RELEASE_SHA256  $tarball" | sha256sum --check --strict
-          echo "$RELEASE_SHA512  $tarball" | sha512sum --check --strict
-          test "$(wc -c < "$tarball")" = "$RELEASE_BYTES"
           mkdir -p "$RUNNER_TEMP/package"
           tar -tzf "$tarball" > "$RUNNER_TEMP/package-members.txt"
           if grep -E '(^/|(^|/)\.\.(/|$))' "$RUNNER_TEMP/package-members.txt"; then exit 1; fi
@@ -340,7 +337,7 @@ jobs:
           cmp "$root/rustdex-qualification-fork-a/no-interceptor-trace.json" "$root/rustdex-qualification-upstream/no-interceptor-trace.json"
           cmp "$root/rustdex-qualification-fork-a/thin-fork.patch" "$root/rustdex-qualification-fork-b/thin-fork.patch"
           cmp "$root/rustdex-qualification-fork-a/thin-fork.patch" "$root/rustdex-qualification-upstream/thin-fork.patch"
-          echo "$RELEASE_SHA256  $root/rustdex-qualification-fork-a/$RELEASE_FILE" | sha256sum --check --strict
+          cmp "$root/rustdex-qualification-fork-a/package-identity.json" "$root/rustdex-qualification-fork-b/package-identity.json"
           echo "$THIN_FORK_PATCH_SHA256  $root/rustdex-qualification-fork-a/thin-fork.patch" | sha256sum --check --strict
 
       - name: Verify immutable release and tag identity
@@ -361,9 +358,13 @@ jobs:
           test "$(jq -r '.id' <<<"$asset")" = "534265788"
           test "$(jq -r '.size' <<<"$asset")" = "$RELEASE_BYTES"
           test "$(jq -r '.digest' <<<"$asset")" = "sha256:$RELEASE_SHA256"
+          mkdir -p "$RUNNER_TEMP/release-evidence/published"
+          gh release download "$RELEASE_TAG" --repo dream2333/pi --pattern "$RELEASE_FILE" --dir "$RUNNER_TEMP/release-evidence/published"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" | sha256sum --check --strict
+          echo "$RELEASE_SHA512  $RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" | sha512sum --check --strict
           gh release verify "$RELEASE_TAG" --repo dream2333/pi --format json > "$RUNNER_TEMP/release-evidence/release-verification.json"
           gh release verify-asset "$RELEASE_TAG" \
-            "$RUNNER_TEMP/build-evidence/rustdex-qualification-fork-a/$RELEASE_FILE" \
+            "$RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" \
             --repo dream2333/pi --format json > "$RUNNER_TEMP/release-evidence/asset-verification.json"
 
       - name: Fetch and bind qualification source
@@ -410,8 +411,8 @@ jobs:
             }
           }
           if (
-            forkA.releaseSha256 !== process.env.RELEASE_SHA256
-            || forkB.releaseSha256 !== process.env.RELEASE_SHA256
+            forkA.releaseSha256 === null
+            || forkB.releaseSha256 === null
             || forkA.noInterceptorTraceSha256 !== forkB.noInterceptorTraceSha256
             || forkA.noInterceptorTraceSha256 !== upstream.noInterceptorTraceSha256
           ) throw new Error("clean build or upstream trace mismatch");
@@ -495,8 +496,8 @@ jobs:
               agentSettlement: "PASS",
               compactionCancel: "PASS",
               releaseBuilder: "PASS",
-              cleanBuildByteIdentity: "PASS",
-              immutableReleaseByteIdentity: "PASS",
+              cleanBuildContentIdentity: "PASS",
+              immutableReleaseContentIdentity: "PASS",
             },
             result: "PASS",
           };

@@ -1,0 +1,205 @@
+name: Rustdex coding-agent qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: rustdex-coding-agent-v0.84.3.3-qualification
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      FORK_REPOSITORY: https://github.com/dream2333/pi.git
+      FORK_COMMIT: 5f3747430255eff74d9d82dd60d2270fbf45db54
+      UPSTREAM_BASE_COMMIT: 4e494929998d6bc4fccf75e0a233f727db4b70ee
+      RELEASE_TAG: rustdex-coding-agent-v0.84.3.3
+      RELEASE_FILE: dream2333-pi-coding-agent-0.84.3-rustdex.3.tgz
+      RELEASE_SHA256: 28ad878330d48c283699a165a084da192784fbbf5829d04b517df8132ae36785
+      RELEASE_SHA512: d675b0802e190e1b0b67697b7269d32fcd823afb4c9271c4ade861f829887e6635a148f6b3eb2b714fb87e3ed362b4dc41747603e9f5c3bb057dfb3d29b764b7
+      PACKAGE_CONTENTS_SHA256: 86d4ebc75f99c49587a42f4424c3fa440af1c136e679557b151977547f27a2b7
+      UPSTREAM_MODEL_ARCHIVE_URL: https://github.com/earendil-works/pi/releases/download/v0.84.3/pi-0.84.3-source.tar.gz
+      UPSTREAM_MODEL_ARCHIVE_SHA256: 056f84c467450fb5700ad4df9c8cc669bf7f6046976eed7a19eadbc7553b6500
+
+    steps:
+      - name: Fetch the exact fork source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "$FORK_REPOSITORY"
+          git fetch --no-tags --depth=1 origin "$FORK_COMMIT"
+          git fetch --no-tags --depth=1 origin "$UPSTREAM_BASE_COMMIT"
+          git checkout --detach "$FORK_COMMIT"
+          test "$(git rev-parse HEAD)" = "$FORK_COMMIT"
+
+      - name: Set up Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.8.0
+          cache: npm
+
+      - name: Enforce thin-fork diff allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" > "$RUNNER_TEMP/fork-diff.txt"
+          cat > "$RUNNER_TEMP/expected-fork-diff.txt" <<'EOF'
+          packages/coding-agent/src/core/sdk.ts
+          packages/coding-agent/src/index.ts
+          packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts
+          scripts/build-rustdex-coding-agent-release.mjs
+          scripts/rustdex-coding-agent-release.json
+          scripts/rustdex-coding-agent-release.test.mjs
+          EOF
+          diff -u "$RUNNER_TEMP/expected-fork-diff.txt" "$RUNNER_TEMP/fork-diff.txt"
+
+      - name: Install the exact dependency graph
+        shell: bash
+        run: npm ci
+
+      - name: Run dispatch and unchanged-state-machine conformance tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx vitest --run \
+            packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts \
+            packages/coding-agent/test/agent-session-retry.test.ts \
+            packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts \
+            packages/coding-agent/test/agent-session-concurrent.test.ts \
+            packages/coding-agent/test/suite/regressions/1717-2113-agent-session-event-settlement.test.ts \
+            packages/coding-agent/test/suite/regressions/3688-tree-cancel-compacting.test.ts
+          node --test scripts/rustdex-coding-agent-release.test.mjs
+
+      - name: Acquire pinned upstream model data
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/pi-model-data.tar.gz" "$UPSTREAM_MODEL_ARCHIVE_URL"
+          echo "$UPSTREAM_MODEL_ARCHIVE_SHA256  $RUNNER_TEMP/pi-model-data.tar.gz" | sha256sum --check --strict
+
+      - name: Rebuild the release twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-a" "$RUNNER_TEMP/release-b"
+          node scripts/build-rustdex-coding-agent-release.mjs \
+            --output "$RUNNER_TEMP/release-a" \
+            --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
+            > "$RUNNER_TEMP/release-a.log"
+          node scripts/build-rustdex-coding-agent-release.mjs \
+            --output "$RUNNER_TEMP/release-b" \
+            --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
+            > "$RUNNER_TEMP/release-b.log"
+          cmp "$RUNNER_TEMP/release-a/$RELEASE_FILE" "$RUNNER_TEMP/release-b/$RELEASE_FILE"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/release-a/$RELEASE_FILE" | sha256sum --check --strict
+          echo "$RELEASE_SHA512  $RUNNER_TEMP/release-a/$RELEASE_FILE" | sha512sum --check --strict
+
+      - name: Match the immutable GitHub Release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_url="https://github.com/dream2333/pi/releases/download/$RELEASE_TAG/$RELEASE_FILE"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/published-$RELEASE_FILE" "$asset_url"
+          cmp "$RUNNER_TEMP/release-a/$RELEASE_FILE" "$RUNNER_TEMP/published-$RELEASE_FILE"
+
+      - name: Verify package contents and write qualification receipt
+        shell: bash
+        env:
+          WORKFLOW_SOURCE_COMMIT: ${{ github.sha }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/unpacked"
+          tar -xzf "$RUNNER_TEMP/release-a/$RELEASE_FILE" -C "$RUNNER_TEMP/unpacked"
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+          import { join, relative } from "node:path";
+
+          const packageRoot = join(process.env.RUNNER_TEMP, "unpacked", "package");
+          const files = [];
+          const visit = (directory) => {
+            for (const entry of readdirSync(directory, { withFileTypes: true })) {
+              const path = join(directory, entry.name);
+              if (entry.isDirectory()) visit(path);
+              else if (entry.isFile()) files.push(path);
+              else throw new Error("release contains an unsupported filesystem entry");
+            }
+          };
+          visit(packageRoot);
+          const records = files.map((path) => {
+            const bytes = readFileSync(path);
+            const fileHash = createHash("sha256").update(bytes).digest("hex");
+            return `${relative(packageRoot, path).replaceAll("\\\\", "/")}\0${statSync(path).size}\0${fileHash}\n`;
+          }).sort();
+          const contentsHash = createHash("sha256").update(records.join("")).digest("hex");
+          if (contentsHash !== process.env.PACKAGE_CONTENTS_SHA256 || files.length !== 1045) {
+            throw new Error(`package contents drift: ${contentsHash}/${files.length}`);
+          }
+          const diffBytes = readFileSync(join(process.env.RUNNER_TEMP, "fork-diff.txt"));
+          const receipt = {
+            schema: "rustdex.pi-fork-qualification-receipt.v1",
+            repository: "dream2333/pi",
+            workflowSourceCommit: process.env.WORKFLOW_SOURCE_COMMIT,
+            runId: process.env.WORKFLOW_RUN_ID,
+            runAttempt: Number(process.env.WORKFLOW_RUN_ATTEMPT),
+            upstreamBaseCommit: process.env.UPSTREAM_BASE_COMMIT,
+            forkCommit: process.env.FORK_COMMIT,
+            releaseTag: process.env.RELEASE_TAG,
+            releaseFile: process.env.RELEASE_FILE,
+            releaseSha256: process.env.RELEASE_SHA256,
+            releaseSha512: process.env.RELEASE_SHA512,
+            packageContentsSha256: contentsHash,
+            packageEntryCount: files.length,
+            upstreamModelArchiveSha256: process.env.UPSTREAM_MODEL_ARCHIVE_SHA256,
+            forkDiffSha256: createHash("sha256").update(diffBytes).digest("hex"),
+            conformanceSuites: [
+              "model-dispatch-interceptor",
+              "same-model-retry",
+              "auto-compaction-queue",
+              "concurrent-session",
+              "agent-settlement",
+              "compaction-cancel",
+              "release-builder",
+              "double-build-byte-identity",
+              "immutable-release-byte-identity"
+            ],
+            result: "PASS"
+          };
+          writeFileSync(join(process.env.RUNNER_TEMP, "qualification-receipt.json"), `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+
+      - name: Attest the rebuilt release
+        id: attest-release
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: ${{ runner.temp }}/release-a/${{ env.RELEASE_FILE }}
+
+      - name: Attest the qualification receipt
+        id: attest-receipt
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+        with:
+          subject-path: ${{ runner.temp }}/qualification-receipt.json
+
+      - name: Upload the immutable evidence bundle
+        id: upload-evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rustdex-coding-agent-v0.84.3.3-qualification
+          path: |
+            ${{ runner.temp }}/qualification-receipt.json
+            ${{ runner.temp }}/fork-diff.txt
+            ${{ runner.temp }}/release-a/${{ env.RELEASE_FILE }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+

@@ -8,7 +8,7 @@ import { applyReleaseIdentity, packageContentsIdentity } from "./build-rustdex-c
 
 const config = {
 	packageName: "@dream2333/pi-coding-agent",
-	packageVersion: "0.84.3-rustdex.2",
+	packageVersion: "0.84.3-rustdex.3",
 	upstreamBaseCommit: "4e494929998d6bc4fccf75e0a233f727db4b70ee",
 	dispatchGuardAbi: "model-dispatch-interceptor.v1",
 	entrypoints: {

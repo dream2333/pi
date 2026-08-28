@@ -65,6 +65,23 @@ jobs:
         shell: bash
         run: npm ci
 
+      - name: Acquire pinned upstream model data
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/pi-model-data.tar.gz" "$UPSTREAM_MODEL_ARCHIVE_URL"
+          echo "$UPSTREAM_MODEL_ARCHIVE_SHA256  $RUNNER_TEMP/pi-model-data.tar.gz" | sha256sum --check --strict
+
+      - name: Build the first release candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release-a"
+          node scripts/build-rustdex-coding-agent-release.mjs \
+            --output "$RUNNER_TEMP/release-a" \
+            --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
+            > "$RUNNER_TEMP/release-a.log"
+
       - name: Run dispatch and unchanged-state-machine conformance tests
         shell: bash
         run: |
@@ -78,22 +95,11 @@ jobs:
             packages/coding-agent/test/suite/regressions/3688-tree-cancel-compacting.test.ts
           node --test scripts/rustdex-coding-agent-release.test.mjs
 
-      - name: Acquire pinned upstream model data
+      - name: Rebuild and prove byte identity
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/pi-model-data.tar.gz" "$UPSTREAM_MODEL_ARCHIVE_URL"
-          echo "$UPSTREAM_MODEL_ARCHIVE_SHA256  $RUNNER_TEMP/pi-model-data.tar.gz" | sha256sum --check --strict
-
-      - name: Rebuild the release twice
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/release-a" "$RUNNER_TEMP/release-b"
-          node scripts/build-rustdex-coding-agent-release.mjs \
-            --output "$RUNNER_TEMP/release-a" \
-            --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
-            > "$RUNNER_TEMP/release-a.log"
+          mkdir -p "$RUNNER_TEMP/release-b"
           node scripts/build-rustdex-coding-agent-release.mjs \
             --output "$RUNNER_TEMP/release-b" \
             --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
@@ -202,4 +208,3 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
-

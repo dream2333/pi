@@ -227,6 +227,11 @@ export {
 	createReadOnlyTools,
 	createReadTool,
 	createWriteTool,
+	type ModelDispatchAfterInput,
+	type ModelDispatchAfterResult,
+	type ModelDispatchBeforeInput,
+	type ModelDispatchBeforeResult,
+	type ModelDispatchInterceptor,
 	type PromptTemplate,
 } from "./core/sdk.ts";
 export {

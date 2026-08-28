@@ -1,6 +1,15 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai/compat";
+import {
+	type AssistantMessage,
+	type Context,
+	clampThinkingLevel,
+	createAssistantMessageEventStream,
+	type Message,
+	type Model,
+	type ModelsSimpleStreamOptions,
+	streamSimple,
+} from "@earendil-works/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -85,6 +94,37 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/**
+	 * Optional fail-closed interception around each logical model dispatch.
+	 *
+	 * `before` runs immediately before ModelRuntime is called. A rejection emits
+	 * a zero-usage, non-retryable aborted response without calling the provider.
+	 * `after` runs after the complete assistant message is available and before
+	 * the agent loop can execute any requested tools.
+	 */
+	modelDispatchInterceptor?: ModelDispatchInterceptor;
+}
+
+export interface ModelDispatchBeforeInput {
+	model: Model<any>;
+	context: Context;
+	options: ModelsSimpleStreamOptions;
+}
+
+export type ModelDispatchBeforeResult =
+	| { allow: true; dispatchId: string; options: ModelsSimpleStreamOptions }
+	| { allow: false; code: string };
+
+export interface ModelDispatchAfterInput extends ModelDispatchBeforeInput {
+	dispatchId: string;
+	message: AssistantMessage;
+}
+
+export type ModelDispatchAfterResult = { allow: true } | { allow: false; code: string };
+
+export interface ModelDispatchInterceptor {
+	before: (input: ModelDispatchBeforeInput) => ModelDispatchBeforeResult | Promise<ModelDispatchBeforeResult>;
+	after: (input: ModelDispatchAfterInput) => ModelDispatchAfterResult | Promise<ModelDispatchAfterResult>;
 }
 
 /** Result from createAgentSession */
@@ -302,6 +342,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const modelDispatchInterceptor = options.modelDispatchInterceptor;
 
 	agent = new Agent({
 		initialState: {
@@ -321,7 +362,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
 			const headerRunner = extensionRunnerRef.current;
-			return modelRuntime.streamSimple(model, context, {
+			const providerOptions: ModelsSimpleStreamOptions = {
 				...options,
 				timeoutMs,
 				websocketConnectTimeoutMs,
@@ -338,7 +379,96 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						? headerRunner.emitBeforeProviderHeaders(headers ?? {})
 						: (headers ?? {});
 				},
-			});
+			};
+
+			if (!modelDispatchInterceptor) {
+				return modelRuntime.streamSimple(model, context, providerOptions);
+			}
+
+			let beforeCandidate: unknown;
+			try {
+				beforeCandidate = await modelDispatchInterceptor.before({ model, context, options: providerOptions });
+			} catch {
+				return createDispatchRejectionStream(model, "interceptor-before-failed");
+			}
+
+			if (!isModelDispatchBeforeResult(beforeCandidate)) {
+				return createDispatchRejectionStream(model, "invalid-interceptor-result");
+			}
+			const beforeResult = beforeCandidate;
+			if (!beforeResult.allow) {
+				return createDispatchRejectionStream(model, normalizeDispatchCode(beforeResult.code));
+			}
+			if (!beforeResult.dispatchId.trim() || beforeResult.dispatchId.length > 256) {
+				return createDispatchRejectionStream(model, "invalid-dispatch-id");
+			}
+
+			const providerStream = modelRuntime.streamSimple(model, context, beforeResult.options);
+			const interceptedStream = createAssistantMessageEventStream();
+			void (async () => {
+				try {
+					for await (const event of providerStream) {
+						if (event.type !== "done" && event.type !== "error") {
+							interceptedStream.push(event);
+							continue;
+						}
+
+						const message = event.type === "done" ? event.message : event.error;
+						const accepted = await runAfterDispatchInterceptor(modelDispatchInterceptor, {
+							model,
+							context,
+							options: beforeResult.options,
+							dispatchId: beforeResult.dispatchId,
+							message,
+						});
+						if (!accepted.allow) {
+							interceptedStream.push({
+								type: "error",
+								reason: "aborted",
+								error: abortAssistantMessage(message, accepted.code),
+							});
+							return;
+						}
+						interceptedStream.push(event);
+						return;
+					}
+
+					const message = await providerStream.result();
+					const accepted = await runAfterDispatchInterceptor(modelDispatchInterceptor, {
+						model,
+						context,
+						options: beforeResult.options,
+						dispatchId: beforeResult.dispatchId,
+						message,
+					});
+					if (!accepted.allow) {
+						interceptedStream.push({
+							type: "error",
+							reason: "aborted",
+							error: abortAssistantMessage(message, accepted.code),
+						});
+						return;
+					}
+					if (message.stopReason === "error" || message.stopReason === "aborted") {
+						interceptedStream.push({ type: "error", reason: message.stopReason, error: message });
+					} else if (message.stopReason === "pending") {
+						interceptedStream.push({
+							type: "error",
+							reason: "aborted",
+							error: abortAssistantMessage(message, "invalid-pending-response"),
+						});
+					} else {
+						interceptedStream.push({ type: "done", reason: message.stopReason, message });
+					}
+				} catch {
+					interceptedStream.push({
+						type: "error",
+						reason: "aborted",
+						error: createAbortedAssistantMessage(model, "interceptor-after-failed"),
+					});
+				}
+			})();
+			return interceptedStream;
 		},
 		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -407,4 +537,67 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		extensionsResult,
 		modelFallbackMessage,
 	};
+}
+
+function normalizeDispatchCode(code: string): string {
+	return /^[A-Za-z0-9_.:-]{1,128}$/.test(code) ? code : "invalid-interceptor-rejection";
+}
+
+function isModelDispatchBeforeResult(value: unknown): value is ModelDispatchBeforeResult {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Record<string, unknown>;
+	if (candidate.allow === false) return typeof candidate.code === "string";
+	return (
+		candidate.allow === true &&
+		typeof candidate.dispatchId === "string" &&
+		candidate.options !== null &&
+		typeof candidate.options === "object"
+	);
+}
+
+function createAbortedAssistantMessage(model: Model<any>, code: string): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "aborted",
+		errorMessage: `Model dispatch rejected: ${normalizeDispatchCode(code)}`,
+		timestamp: Date.now(),
+	};
+}
+
+function abortAssistantMessage(message: AssistantMessage, code: string): AssistantMessage {
+	return {
+		...message,
+		stopReason: "aborted",
+		errorMessage: `Model dispatch rejected: ${normalizeDispatchCode(code)}`,
+	};
+}
+
+function createDispatchRejectionStream(model: Model<any>, code: string) {
+	const stream = createAssistantMessageEventStream();
+	stream.push({ type: "error", reason: "aborted", error: createAbortedAssistantMessage(model, code) });
+	return stream;
+}
+
+async function runAfterDispatchInterceptor(
+	interceptor: ModelDispatchInterceptor,
+	input: ModelDispatchAfterInput,
+): Promise<ModelDispatchAfterResult> {
+	try {
+		const result = await interceptor.after(input);
+		return result.allow ? result : { allow: false, code: normalizeDispatchCode(result.code) };
+	} catch {
+		return { allow: false, code: "interceptor-after-failed" };
+	}
 }

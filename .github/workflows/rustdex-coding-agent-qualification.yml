@@ -298,7 +298,7 @@ jobs:
           node --input-type=module <<'NODE'
           import { createHash } from "node:crypto";
           import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-          import { join, relative } from "node:path";
+          import { join, relative, sep } from "node:path";
           const sha256 = (value) => createHash("sha256").update(value).digest("hex");
           const sha512 = (value) => createHash("sha512").update(value).digest("hex");
           const root = join(process.env.RUNNER_TEMP, "package", "package");
@@ -349,7 +349,7 @@ jobs:
           visit(root);
           const records = files.map((path) => {
             const bytes = readFileSync(path);
-            return `${relative(root, path).replaceAll("\\\\", "/")}\0${statSync(path).size}\0${sha256(bytes)}\n`;
+            return `${relative(root, path).split(sep).join("/")}\0${statSync(path).size}\0${sha256(bytes)}\n`;
           }).sort();
           const contentsHash = sha256(records.join(""));
           if (contentsHash !== process.env.PACKAGE_CONTENTS_SHA256) throw new Error("package contents drift");

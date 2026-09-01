@@ -547,21 +547,28 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
 				output.responseId ||= chunk.id;
-				if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
-					output.responseModel ||= chunk.model;
+				let responseModelDrift = false;
+				if (typeof chunk.model === "string" && chunk.model.trim().length > 0) {
+					if (output.responseModel === undefined) {
+						output.responseModel = chunk.model;
+					} else if (output.responseModel !== chunk.model) {
+						responseModelDrift = true;
+					}
 				}
 				if (chunk.usage) {
 					output.usage = parseChunkUsage(chunk.usage, model);
 				}
 
 				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
-				if (!choice) continue;
-
 				// Fallback: some providers (e.g., Moonshot) return usage
 				// in choice.usage instead of the standard chunk.usage
-				if (!chunk.usage && (choice as any).usage) {
+				if (!chunk.usage && (choice as any)?.usage) {
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
+				if (responseModelDrift) {
+					throw new Error("Provider response model changed within the stream");
+				}
+				if (!choice) continue;
 
 				if (choice.finish_reason) {
 					output.rawStopReason = choice.finish_reason;

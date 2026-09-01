@@ -64,6 +64,7 @@ function readConfig() {
 		config.schema !== "rustdex.coding-agent-release.v1" ||
 		typeof config.packageName !== "string" ||
 		typeof config.packageVersion !== "string" ||
+		config.responseModelObservationAbi !== "openai-completions-response-model.v1" ||
 		!config.upstreamBaseCommit?.match(/^[0-9a-f]{40}$/u) ||
 		!config.upstreamModelData?.archiveSha256?.match(/^[0-9a-f]{64}$/u)
 	) {
@@ -126,6 +127,7 @@ export function applyReleaseIdentity(packageJson, shrinkwrap, config, forkCommit
 			upstreamCommit: config.upstreamBaseCommit,
 			forkCommit,
 			dispatchGuardAbi: config.dispatchGuardAbi,
+			responseModelObservationAbi: config.responseModelObservationAbi,
 			releaseConfigSha256: configSha256,
 		},
 		main: config.entrypoints.main,

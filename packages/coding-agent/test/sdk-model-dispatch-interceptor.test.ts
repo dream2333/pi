@@ -192,8 +192,9 @@ describe("createAgentSession modelDispatchInterceptor", () => {
 	it("allows before to narrow provider options and reports the complete response to after", async () => {
 		let afterUsage = -1;
 		let afterDispatchId = "";
+		let afterResponseModel: string | undefined;
 		const harness = await createHarness({
-			response: () => createMessage("stop", undefined, 7),
+			response: () => ({ ...createMessage("stop", undefined, 7), responseModel: "dispatch-model" }),
 			interceptor: {
 				before: ({ options }) => ({
 					allow: true,
@@ -203,6 +204,7 @@ describe("createAgentSession modelDispatchInterceptor", () => {
 				after: ({ dispatchId, message }) => {
 					afterDispatchId = dispatchId;
 					afterUsage = message.usage.totalTokens;
+					afterResponseModel = message.responseModel;
 					return { allow: true };
 				},
 			},
@@ -213,6 +215,7 @@ describe("createAgentSession modelDispatchInterceptor", () => {
 			expect(harness.providerOptions()?.maxTokens).toBe(17);
 			expect(afterDispatchId).toBe("dispatch-1");
 			expect(afterUsage).toBe(14);
+			expect(afterResponseModel).toBe("dispatch-model");
 		} finally {
 			harness.session.dispose();
 		}

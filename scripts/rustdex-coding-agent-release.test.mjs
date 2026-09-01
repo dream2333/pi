@@ -8,9 +8,10 @@ import { applyReleaseIdentity, packageContentsIdentity } from "./build-rustdex-c
 
 const config = {
 	packageName: "@dream2333/pi-coding-agent",
-	packageVersion: "0.84.3-rustdex.3",
+	packageVersion: "0.84.3-rustdex.4",
 	upstreamBaseCommit: "4e494929998d6bc4fccf75e0a233f727db4b70ee",
 	dispatchGuardAbi: "model-dispatch-interceptor.v1",
+	responseModelObservationAbi: "openai-completions-response-model.v1",
 	entrypoints: {
 		main: "./dist/bundle/index.js",
 		rootImport: "./dist/bundle/index.js",
@@ -40,6 +41,10 @@ test("release identity binds the fork commit and bundled SDK entry", () => {
 	assert.equal(result.packageJson.main, config.entrypoints.main);
 	assert.equal(result.packageJson.exports["."].import, config.entrypoints.rootImport);
 	assert.equal(result.packageJson.rustdexFork.forkCommit, "a".repeat(40));
+	assert.equal(
+		result.packageJson.rustdexFork.responseModelObservationAbi,
+		config.responseModelObservationAbi,
+	);
 	assert.equal(result.shrinkwrap.packages[""].name, config.packageName);
 	assert.equal(result.shrinkwrap.packages[""].version, config.packageVersion);
 });

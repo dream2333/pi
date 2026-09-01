@@ -216,6 +216,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # The release builder passes native Windows paths to `tar`. Git for
+          # Windows' MSYS tar treats `D:` as a remote host, so reproduce the
+          # release environment with the native Windows bsdtar executable.
+          export PATH="/c/Windows/System32:$PATH"
+          hash -r
+          actual_tar="$(where.exe tar | tr -d '\r' | head -n 1 | tr '\\' '/' | tr '[:upper:]' '[:lower:]')"
+          test "$actual_tar" = "c:/windows/system32/tar.exe"
           test -f "$RUSTDEX_NPM_CLI_POSIX"
           echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI_POSIX" | sha256sum --check --strict
           test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"

@@ -154,6 +154,11 @@ describe("openai-completions responseModel", () => {
 						finish_reason: "tool_calls",
 					},
 				],
+			},
+			{
+				id: "chatcmpl-4",
+				model: "anthropic/claude-opus-4.8",
+				choices: [],
 				usage: {
 					prompt_tokens: 1,
 					completion_tokens: 1,

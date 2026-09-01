@@ -391,6 +391,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let hasFinishReason = false;
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
+			let responseModelDrift = false;
 			const blocks = output.content as StreamingBlock[];
 			const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
 			const getCustomToolCallInput = (block: StreamingToolCallBlock): string => {
@@ -547,7 +548,6 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
 				output.responseId ||= chunk.id;
-				let responseModelDrift = false;
 				if (typeof chunk.model === "string" && chunk.model.trim().length > 0) {
 					if (output.responseModel === undefined) {
 						output.responseModel = chunk.model;
@@ -566,7 +566,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
 				if (responseModelDrift) {
-					throw new Error("Provider response model changed within the stream");
+					continue;
 				}
 				if (!choice) continue;
 
@@ -672,6 +672,10 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 						}
 					}
 				}
+			}
+
+			if (responseModelDrift) {
+				throw new Error("Provider response model changed within the stream");
 			}
 
 			for (const block of blocks) {

@@ -7,29 +7,34 @@ permissions:
   contents: read
 
 concurrency:
-  group: rustdex-coding-agent-v0.84.3.3-qualification-v2
+  group: rustdex-coding-agent-v0.84.3.4-qualification-v3
   cancel-in-progress: false
 
 env:
   FORK_REPOSITORY: https://github.com/dream2333/pi.git
-  FORK_COMMIT: 5f3747430255eff74d9d82dd60d2270fbf45db54
+  FORK_COMMIT: 4b7c269c1b650cf5ced56e05e6ac2998234a6542
   UPSTREAM_BASE_COMMIT: 4e494929998d6bc4fccf75e0a233f727db4b70ee
-  THIN_FORK_PATCH_SHA256: e07651e8e41b2416dd6266953f8d3b8e3e1f8b16f985605e56aada598c8a0325
-  THIN_FORK_PATCH_BYTES: "33292"
+  THIN_FORK_PATCH_SHA256: af78710590d377a82ea755f4a7fbd1b56f51b5d3cc03888d5f84cdfa64dfcd87
+  THIN_FORK_PATCH_BYTES: "41818"
   TRACE_TEST_SHA256: 2de7ade62736964a6239380a3f606ea3285062694e9fb0f14eab41f01a61a094
-  RELEASE_TAG: rustdex-coding-agent-v0.84.3.3
-  RELEASE_FILE: dream2333-pi-coding-agent-0.84.3-rustdex.3.tgz
-  RELEASE_SHA256: 28ad878330d48c283699a165a084da192784fbbf5829d04b517df8132ae36785
-  RELEASE_SHA512: d675b0802e190e1b0b67697b7269d32fcd823afb4c9271c4ade861f829887e6635a148f6b3eb2b714fb87e3ed362b4dc41747603e9f5c3bb057dfb3d29b764b7
-  RELEASE_BYTES: "6892175"
+  RESPONSE_MODEL_TEST_SHA256: 6a86d7b0786606670c29dc3771da4360ca2865fe996a3b440724b6e6875333c3
+  RELEASE_TAG: rustdex-coding-agent-v0.84.3.4
+  RELEASE_TAG_OBJECT_SHA: 7e37e30596ce05715a4b6e12994650916ea28944
+  RELEASE_ID: "380237860"
+  RELEASE_ASSET_ID: "539058861"
+  RELEASE_FILE: dream2333-pi-coding-agent-0.84.3-rustdex.4.tgz
+  RELEASE_SHA256: bfcde6d43844f7c351a892178a912a0c98578d4c7c5a33f548cf207d61537133
+  RELEASE_SHA512: 5897e6a62e811e5a5ba2d022cf3c2c563f7cce182a9ab9f010c768de0494520db731e36259e2ee29ba1e1cbcfb0992525d4223ca1db48f2bc0302a011258ff73
+  RELEASE_BYTES: "6892509"
   PACKAGE_NAME: "@dream2333/pi-coding-agent"
-  PACKAGE_VERSION: 0.84.3-rustdex.3
-  PACKAGE_JSON_SHA256: 8aace9c4494cd3bc5b8764677aeababa6813c87c376e09c20021cf5550517e97
-  PACKAGE_SHRINKWRAP_SHA256: d8054ed8e02ce504a73c3a31d7421b9488a43020f2415f357ad83695e72c6512
-  PACKAGE_CONTENTS_SHA256: 86d4ebc75f99c49587a42f4424c3fa440af1c136e679557b151977547f27a2b7
+  PACKAGE_VERSION: 0.84.3-rustdex.4
+  PACKAGE_JSON_SHA256: dfde78daed82ba030d66b2df8d83eb0e946cdb6bd554252caedcf8ba4b9e13b2
+  PACKAGE_SHRINKWRAP_SHA256: ea2371235224837de22afb3659bb65bdcb7f6fa4a8edeacfcb678a52abecd212
+  PACKAGE_CONTENTS_SHA256: 774af9bc6666562f3ee1af3f3c5c4884cb49225e2242ded80811cf1cb77a1480
   PACKAGE_ENTRY_COUNT: "1045"
+  RELEASE_CONFIG_SHA256: 3a5af2cdd5dbff851a3d56ca1bffc70bc52de9df3752df3cc575a683a1ae6676
   LICENSE_SHA256: 0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48
-  CONSUMER_DEPENDENCY_CLOSURE_SHA256: f67a8f514ee966a69c613738a8e614778084c1c70317e83ff9845087759e7ccd
+  CONSUMER_DEPENDENCY_CLOSURE_SHA256: b62799f035d9bd43c35a05c9073e182bb62117a34aa277b2c538d2809474f0eb
   UPSTREAM_MODEL_ARCHIVE_URL: https://github.com/earendil-works/pi/releases/download/v0.84.3/pi-0.84.3-source.tar.gz
   UPSTREAM_MODEL_ARCHIVE_SHA256: 056f84c467450fb5700ad4df9c8cc669bf7f6046976eed7a19eadbc7553b6500
 
@@ -45,11 +50,11 @@ jobs:
       matrix:
         include:
           - variant: fork-a
-            sourceCommit: 5f3747430255eff74d9d82dd60d2270fbf45db54
+            sourceCommit: 4b7c269c1b650cf5ced56e05e6ac2998234a6542
             buildRelease: "true"
             runForkTests: "true"
           - variant: fork-b
-            sourceCommit: 5f3747430255eff74d9d82dd60d2270fbf45db54
+            sourceCommit: 4b7c269c1b650cf5ced56e05e6ac2998234a6542
             buildRelease: "true"
             runForkTests: "false"
           - variant: upstream
@@ -86,6 +91,9 @@ jobs:
           set -euo pipefail
           git diff --name-only "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" > "$RUNNER_TEMP/fork-files.txt"
           cat > "$RUNNER_TEMP/expected-fork-files.txt" <<'EOF'
+          packages/ai/src/api/openai-completions.ts
+          packages/ai/src/types.ts
+          packages/ai/test/openai-completions-response-model.test.ts
           packages/coding-agent/src/core/sdk.ts
           packages/coding-agent/src/index.ts
           packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts
@@ -95,6 +103,9 @@ jobs:
           EOF
           diff -u "$RUNNER_TEMP/expected-fork-files.txt" "$RUNNER_TEMP/fork-files.txt"
           git diff --binary --full-index "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" -- \
+            packages/ai/src/api/openai-completions.ts \
+            packages/ai/src/types.ts \
+            packages/ai/test/openai-completions-response-model.test.ts \
             packages/coding-agent/src/core/sdk.ts \
             packages/coding-agent/src/index.ts \
             packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts \
@@ -164,6 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest --run \
+            packages/ai/test/openai-completions-response-model.test.ts \
             packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts \
             packages/coding-agent/test/agent-session-retry.test.ts \
             packages/coding-agent/test/agent-session-auto-compaction-queue.test.ts \
@@ -180,6 +192,9 @@ jobs:
         run: |
           set -euo pipefail
           tarball="$RUNNER_TEMP/release/$RELEASE_FILE"
+          test "$(wc -c < "$tarball")" = "$RELEASE_BYTES"
+          echo "$RELEASE_SHA256  $tarball" | sha256sum --check --strict
+          echo "$RELEASE_SHA512  $tarball" | sha512sum --check --strict
           mkdir -p "$RUNNER_TEMP/package"
           tar -tzf "$tarball" > "$RUNNER_TEMP/package-members.txt"
           if grep -E '(^/|(^|/)\.\.(/|$))' "$RUNNER_TEMP/package-members.txt"; then exit 1; fi
@@ -209,7 +224,9 @@ jobs:
             || packageJson.rustdexFork?.upstreamCommit !== process.env.UPSTREAM_BASE_COMMIT
             || packageJson.rustdexFork?.forkCommit !== process.env.FORK_COMMIT
             || packageJson.rustdexFork?.dispatchGuardAbi !== "model-dispatch-interceptor.v1"
-          ) throw new Error("package SDK/fork identity drift");
+            || packageJson.rustdexFork?.responseModelObservationAbi !== "openai-completions-response-model.v1"
+            || packageJson.rustdexFork?.releaseConfigSha256 !== process.env.RELEASE_CONFIG_SHA256
+          ) throw new Error("package runtime/fork identity drift");
           for (const name of ["preinstall", "install", "postinstall"]) {
             if (Object.hasOwn(packageJson.scripts ?? {}, name)) throw new Error(`forbidden lifecycle script: ${name}`);
           }
@@ -244,9 +261,29 @@ jobs:
             licenseSha256: licenseHash,
             packageContentsSha256: contentsHash,
             packageEntryCount: files.length,
+            dispatchGuardAbi: packageJson.rustdexFork.dispatchGuardAbi,
+            responseModelObservationAbi: packageJson.rustdexFork.responseModelObservationAbi,
+            releaseConfigSha256: packageJson.rustdexFork.releaseConfigSha256,
             forbiddenLifecycleScripts: "absent",
           }, null, 2)}\n`);
           NODE
+
+      - name: Run installed response-model consumer
+        if: matrix.buildRelease == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/release/$RELEASE_FILE"
+          consumer_root="$(mktemp -d "$RUNNER_TEMP/rustdex-consumer-${BUILD_VARIANT}-XXXXXX")"
+          git show "$GITHUB_SHA":.github/qualification/response-model-observation-consumer.test.mjs \
+            > "$RUNNER_TEMP/response-model-observation-consumer.test.mjs"
+          echo "$RESPONSE_MODEL_TEST_SHA256  $RUNNER_TEMP/response-model-observation-consumer.test.mjs" | sha256sum --check --strict
+          cp "$RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$consumer_root/response-model-observation-consumer.test.mjs"
+          cd "$consumer_root"
+          npm install --ignore-scripts --package-lock=false --no-audit --no-fund "$tarball" \
+            2>&1 | tee "$RUNNER_TEMP/response-model-consumer-install.log"
+          node --test response-model-observation-consumer.test.mjs \
+            2>&1 | tee "$RUNNER_TEMP/response-model-consumer.log"
 
       - name: Assemble build evidence
         shell: bash
@@ -263,6 +300,9 @@ jobs:
           if [[ "$BUILD_RELEASE" == "true" ]]; then
             cp "$RUNNER_TEMP/release/$RELEASE_FILE" "$evidence/$RELEASE_FILE"
             cp "$RUNNER_TEMP/package-identity.json" "$evidence/package-identity.json"
+            cp "$RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$evidence/response-model-observation-consumer.test.mjs"
+            cp "$RUNNER_TEMP/response-model-consumer-install.log" "$evidence/response-model-consumer-install.log"
+            cp "$RUNNER_TEMP/response-model-consumer.log" "$evidence/response-model-consumer.log"
           fi
           export EVIDENCE_ROOT="$evidence"
           export NODE_VERSION="$(node --version)"
@@ -292,6 +332,9 @@ jobs:
             traceTestLogSha256: hash("trace-test.log"),
             forkTestsLogSha256: hash("fork-tests.log"),
             releaseTestsLogSha256: hash("release-tests.log"),
+            responseModelConsumerSourceSha256: hash("response-model-observation-consumer.test.mjs"),
+            responseModelConsumerInstallLogSha256: hash("response-model-consumer-install.log"),
+            responseModelConsumerLogSha256: hash("response-model-consumer.log"),
             releaseSha256: hash(process.env.RELEASE_FILE),
             packageIdentitySha256: hash("package-identity.json"),
             result: "PASS",
@@ -321,6 +364,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
+      - name: Set up Node 24
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.8.0
+
       - name: Download isolated build evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
@@ -339,6 +387,8 @@ jobs:
           cmp "$root/rustdex-qualification-fork-a/thin-fork.patch" "$root/rustdex-qualification-upstream/thin-fork.patch"
           cmp "$root/rustdex-qualification-fork-a/package-identity.json" "$root/rustdex-qualification-fork-b/package-identity.json"
           echo "$THIN_FORK_PATCH_SHA256  $root/rustdex-qualification-fork-a/thin-fork.patch" | sha256sum --check --strict
+          echo "$RELEASE_SHA256  $root/rustdex-qualification-fork-a/$RELEASE_FILE" | sha256sum --check --strict
+          echo "$RELEASE_SHA256  $root/rustdex-qualification-fork-b/$RELEASE_FILE" | sha256sum --check --strict
 
       - name: Verify immutable release and tag identity
         shell: bash
@@ -349,19 +399,27 @@ jobs:
           gh api "repos/dream2333/pi/git/ref/tags/$RELEASE_TAG" > "$RUNNER_TEMP/release-evidence/tag-ref.json"
           tag_object="$(jq -r '.object.sha' "$RUNNER_TEMP/release-evidence/tag-ref.json")"
           test "$(jq -r '.object.type' "$RUNNER_TEMP/release-evidence/tag-ref.json")" = "tag"
+          test "$tag_object" = "$RELEASE_TAG_OBJECT_SHA"
           gh api "repos/dream2333/pi/git/tags/$tag_object" > "$RUNNER_TEMP/release-evidence/tag-object.json"
           test "$(jq -r '.object.type' "$RUNNER_TEMP/release-evidence/tag-object.json")" = "commit"
           test "$(jq -r '.object.sha' "$RUNNER_TEMP/release-evidence/tag-object.json")" = "$FORK_COMMIT"
           test "$(jq -r '.immutable' "$RUNNER_TEMP/release-evidence/release.json")" = "true"
-          test "$(jq -r '.id' "$RUNNER_TEMP/release-evidence/release.json")" = "378723179"
+          test "$(jq -r '.draft' "$RUNNER_TEMP/release-evidence/release.json")" = "false"
+          test "$(jq -r '.prerelease' "$RUNNER_TEMP/release-evidence/release.json")" = "false"
+          test "$(jq -r '.tag_name' "$RUNNER_TEMP/release-evidence/release.json")" = "$RELEASE_TAG"
+          test "$(jq -r '.id' "$RUNNER_TEMP/release-evidence/release.json")" = "$RELEASE_ID"
+          test "$(jq '.assets | length' "$RUNNER_TEMP/release-evidence/release.json")" = "1"
+          test "$(jq --arg name "$RELEASE_FILE" '[.assets[] | select(.name == $name)] | length' "$RUNNER_TEMP/release-evidence/release.json")" = "1"
           asset="$(jq -c --arg name "$RELEASE_FILE" '.assets[] | select(.name == $name)' "$RUNNER_TEMP/release-evidence/release.json")"
-          test "$(jq -r '.id' <<<"$asset")" = "534265788"
+          test "$(jq -r '.id' <<<"$asset")" = "$RELEASE_ASSET_ID"
           test "$(jq -r '.size' <<<"$asset")" = "$RELEASE_BYTES"
           test "$(jq -r '.digest' <<<"$asset")" = "sha256:$RELEASE_SHA256"
           mkdir -p "$RUNNER_TEMP/release-evidence/published"
           gh release download "$RELEASE_TAG" --repo dream2333/pi --pattern "$RELEASE_FILE" --dir "$RUNNER_TEMP/release-evidence/published"
           echo "$RELEASE_SHA256  $RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" | sha256sum --check --strict
           echo "$RELEASE_SHA512  $RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" | sha512sum --check --strict
+          cmp "$RUNNER_TEMP/build-evidence/rustdex-qualification-fork-a/$RELEASE_FILE" "$RUNNER_TEMP/release-evidence/published/$RELEASE_FILE"
+          cmp "$RUNNER_TEMP/build-evidence/rustdex-qualification-fork-b/$RELEASE_FILE" "$RUNNER_TEMP/release-evidence/published/$RELEASE_FILE"
           gh release verify "$RELEASE_TAG" --repo dream2333/pi --format json > "$RUNNER_TEMP/release-evidence/release-verification.json"
           gh release verify-asset "$RELEASE_TAG" \
             "$RUNNER_TEMP/release-evidence/published/$RELEASE_FILE" \
@@ -377,7 +435,24 @@ jobs:
           gh api -H "Accept: application/vnd.github.raw+json" \
             "repos/$GITHUB_REPOSITORY/contents/.github/qualification/no-interceptor-trace.test.ts?ref=$GITHUB_SHA" \
             > "$RUNNER_TEMP/no-interceptor-trace.test.ts"
+          gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$GITHUB_REPOSITORY/contents/.github/qualification/response-model-observation-consumer.test.mjs?ref=$GITHUB_SHA" \
+            > "$RUNNER_TEMP/response-model-observation-consumer.test.mjs"
           echo "$TRACE_TEST_SHA256  $RUNNER_TEMP/no-interceptor-trace.test.ts" | sha256sum --check --strict
+          echo "$RESPONSE_MODEL_TEST_SHA256  $RUNNER_TEMP/response-model-observation-consumer.test.mjs" | sha256sum --check --strict
+
+      - name: Run published response-model consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/release-evidence/published/$RELEASE_FILE"
+          consumer_root="$(mktemp -d "$RUNNER_TEMP/rustdex-published-consumer-XXXXXX")"
+          cp "$RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$consumer_root/response-model-observation-consumer.test.mjs"
+          cd "$consumer_root"
+          npm install --ignore-scripts --package-lock=false --no-audit --no-fund "$tarball" \
+            2>&1 | tee "$RUNNER_TEMP/release-evidence/published-response-model-consumer-install.log"
+          node --test response-model-observation-consumer.test.mjs \
+            2>&1 | tee "$RUNNER_TEMP/release-evidence/published-response-model-consumer.log"
 
       - name: Write qualification receipt
         shell: bash
@@ -411,14 +486,24 @@ jobs:
             }
           }
           if (
-            forkA.releaseSha256 === null
-            || forkB.releaseSha256 === null
+            forkA.releaseSha256 !== process.env.RELEASE_SHA256
+            || forkB.releaseSha256 !== process.env.RELEASE_SHA256
             || forkA.noInterceptorTraceSha256 !== forkB.noInterceptorTraceSha256
             || forkA.noInterceptorTraceSha256 !== upstream.noInterceptorTraceSha256
+            || forkA.responseModelConsumerSourceSha256 !== process.env.RESPONSE_MODEL_TEST_SHA256
+            || forkB.responseModelConsumerSourceSha256 !== process.env.RESPONSE_MODEL_TEST_SHA256
+            || !forkA.responseModelConsumerInstallLogSha256
+            || !forkB.responseModelConsumerInstallLogSha256
+            || !forkA.responseModelConsumerLogSha256
+            || !forkB.responseModelConsumerLogSha256
           ) throw new Error("clean build or upstream trace mismatch");
           const packageA = readJson(join(process.env.BUILD_EVIDENCE_ROOT, "rustdex-qualification-fork-a", "package-identity.json"));
           const packageB = readJson(join(process.env.BUILD_EVIDENCE_ROOT, "rustdex-qualification-fork-b", "package-identity.json"));
           if (JSON.stringify(packageA) !== JSON.stringify(packageB)) throw new Error("package identity mismatch");
+          if (
+            packageA.responseModelObservationAbi !== "openai-completions-response-model.v1"
+            || packageA.releaseConfigSha256 !== process.env.RELEASE_CONFIG_SHA256
+          ) throw new Error("response-model package identity mismatch");
           const release = readJson(join(process.env.RELEASE_EVIDENCE_ROOT, "release.json"));
           const tagRef = readJson(join(process.env.RELEASE_EVIDENCE_ROOT, "tag-ref.json"));
           const tagObject = readJson(join(process.env.RELEASE_EVIDENCE_ROOT, "tag-object.json"));
@@ -447,6 +532,9 @@ jobs:
               thinForkPatchSha256: process.env.THIN_FORK_PATCH_SHA256,
               thinForkPatchBytes: Number(process.env.THIN_FORK_PATCH_BYTES),
               changedPaths: [
+                "packages/ai/src/api/openai-completions.ts",
+                "packages/ai/src/types.ts",
+                "packages/ai/test/openai-completions-response-model.test.ts",
                 "packages/coding-agent/src/core/sdk.ts",
                 "packages/coding-agent/src/index.ts",
                 "packages/coding-agent/test/sdk-model-dispatch-interceptor.test.ts",
@@ -465,6 +553,15 @@ jobs:
               upstreamTrace: upstream,
               noInterceptorTraceSha256: forkA.noInterceptorTraceSha256,
               traceTestSha256: process.env.TRACE_TEST_SHA256,
+              responseModelConsumerTestSha256: process.env.RESPONSE_MODEL_TEST_SHA256,
+              responseModelConsumerInstallLogSha256: {
+                forkA: forkA.responseModelConsumerInstallLogSha256,
+                forkB: forkB.responseModelConsumerInstallLogSha256,
+              },
+              responseModelConsumerLogSha256: {
+                forkA: forkA.responseModelConsumerLogSha256,
+                forkB: forkB.responseModelConsumerLogSha256,
+              },
               artifacts: runArtifacts,
             },
             release: {
@@ -479,6 +576,8 @@ jobs:
               assetBytes: releaseAsset.size,
               assetDigest: releaseAsset.digest,
               sha512: process.env.RELEASE_SHA512,
+              publishedResponseModelConsumerInstallLogSha256: sha256(readFileSync(join(process.env.RELEASE_EVIDENCE_ROOT, "published-response-model-consumer-install.log"))),
+              publishedResponseModelConsumerLogSha256: sha256(readFileSync(join(process.env.RELEASE_EVIDENCE_ROOT, "published-response-model-consumer.log"))),
               releaseVerificationSha256: sha256(readFileSync(join(process.env.RELEASE_EVIDENCE_ROOT, "release-verification.json"))),
               assetVerificationSha256: sha256(readFileSync(join(process.env.RELEASE_EVIDENCE_ROOT, "asset-verification.json"))),
             },
@@ -496,6 +595,7 @@ jobs:
               agentSettlement: "PASS",
               compactionCancel: "PASS",
               releaseBuilder: "PASS",
+              responseModelObservation: "PASS",
               cleanBuildContentIdentity: "PASS",
               immutableReleaseContentIdentity: "PASS",
             },
@@ -528,9 +628,12 @@ jobs:
       - name: Upload qualification evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: rustdex-coding-agent-v0.84.3.3-qualification
+          name: rustdex-coding-agent-v0.84.3.4-qualification
           path: |
             ${{ runner.temp }}/qualification-receipt.json
+            ${{ runner.temp }}/qualification-workflow.yml
+            ${{ runner.temp }}/no-interceptor-trace.test.ts
+            ${{ runner.temp }}/response-model-observation-consumer.test.mjs
             ${{ runner.temp }}/receipt-attestation-verification.json
             ${{ runner.temp }}/rebuild-attestation-verification.json
             ${{ steps.attest-release.outputs.bundle-path }}

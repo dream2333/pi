@@ -219,15 +219,29 @@ jobs:
           test -f "$RUSTDEX_NPM_CLI_POSIX"
           echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI_POSIX" | sha256sum --check --strict
           test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"
+          git status --porcelain=v1 --untracked-files=all > "$RUSTDEX_RUNNER_TEMP/pre-build-status.txt"
+          if [[ -s "$RUSTDEX_RUNNER_TEMP/pre-build-status.txt" ]]; then
+            echo "release source became dirty before the build" >&2
+            cat "$RUSTDEX_RUNNER_TEMP/pre-build-status.txt" >&2
+            exit 1
+          fi
           if [[ "$BUILD_RELEASE" == "true" ]]; then
             mkdir -p "$RUSTDEX_RUNNER_TEMP/release"
-            node scripts/build-rustdex-coding-agent-release.mjs \
-              --output "$RUSTDEX_RUNNER_TEMP/release" \
-              --model-data-archive "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" \
-              > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1
+            if ! node scripts/build-rustdex-coding-agent-release.mjs \
+                --output "$RUSTDEX_RUNNER_TEMP/release" \
+                --model-data-archive "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" \
+                > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1; then
+              echo "release builder failed; final bounded log follows" >&2
+              tail -n 200 "$RUSTDEX_RUNNER_TEMP/build.log" >&2
+              exit 1
+            fi
           else
             tar -xzf "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" --strip-components=1 -C "$RUSTDEX_WORKSPACE"
-            npm run build:offline > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1
+            if ! npm run build:offline > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1; then
+              echo "upstream build failed; final bounded log follows" >&2
+              tail -n 200 "$RUSTDEX_RUNNER_TEMP/build.log" >&2
+              exit 1
+            fi
           fi
 
       - name: Run upstream/fork no-interceptor trace

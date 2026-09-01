@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rustdex-coding-agent-v0.84.3.4-qualification-v3
+  group: rustdex-coding-agent-v0.84.3.4-qualification-v4
   cancel-in-progress: false
 
 env:
@@ -17,7 +17,7 @@ env:
   THIN_FORK_PATCH_SHA256: af78710590d377a82ea755f4a7fbd1b56f51b5d3cc03888d5f84cdfa64dfcd87
   THIN_FORK_PATCH_BYTES: "41818"
   TRACE_TEST_SHA256: 2de7ade62736964a6239380a3f606ea3285062694e9fb0f14eab41f01a61a094
-  RESPONSE_MODEL_TEST_SHA256: 6a86d7b0786606670c29dc3771da4360ca2865fe996a3b440724b6e6875333c3
+  RESPONSE_MODEL_TEST_SHA256: c5daf7dc3c7a1d3ab3c7926a171f61a514a845fe54d4ff2067c6c227e939c464
   RELEASE_TAG: rustdex-coding-agent-v0.84.3.4
   RELEASE_TAG_OBJECT_SHA: 7e37e30596ce05715a4b6e12994650916ea28944
   RELEASE_ID: "380237860"
@@ -35,13 +35,21 @@ env:
   RELEASE_CONFIG_SHA256: 3a5af2cdd5dbff851a3d56ca1bffc70bc52de9df3752df3cc575a683a1ae6676
   LICENSE_SHA256: 0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48
   CONSUMER_DEPENDENCY_CLOSURE_SHA256: b62799f035d9bd43c35a05c9073e182bb62117a34aa277b2c538d2809474f0eb
+  RUSTDEX_NODE_VERSION: 24.20.0
+  RUSTDEX_NODE_VERSION_OUTPUT: v24.20.0
+  RUSTDEX_NPM_VERSION: 11.9.0
+  RUSTDEX_NPM_TARBALL_URL: https://registry.npmjs.org/npm/-/npm-11.9.0.tgz
+  RUSTDEX_NPM_TARBALL_INTEGRITY: sha512-BBZoU926FCypj4b7V7ElinxsWcy4Kss88UG3ejFYmKyq7Uc5XnT34Me2nEhgCOaL5qY4HvGu5aI92C4OYd7NaA==
+  RUSTDEX_NPM_TARBALL_SHA512: 04166853ddba142ca98f86fb57b1258a7c6c59ccb82acb3cf141b77a315898acaaed47395e74f7e0c7b69c486008e68be6a6381ef1aee5a23dd82e0e61decd68
+  RUSTDEX_NPM_TARBALL_BYTES: "2413625"
+  RUSTDEX_NPM_CLI_SHA256: 8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7
   UPSTREAM_MODEL_ARCHIVE_URL: https://github.com/earendil-works/pi/releases/download/v0.84.3/pi-0.84.3-source.tar.gz
   UPSTREAM_MODEL_ARCHIVE_SHA256: 056f84c467450fb5700ad4df9c8cc669bf7f6046976eed7a19eadbc7553b6500
 
 jobs:
   build:
     name: build-${{ matrix.variant }}
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 45
     permissions:
       contents: read
@@ -66,8 +74,26 @@ jobs:
       SOURCE_COMMIT: ${{ matrix.sourceCommit }}
       BUILD_RELEASE: ${{ matrix.buildRelease }}
       RUN_FORK_TESTS: ${{ matrix.runForkTests }}
+      GH_TOKEN: ${{ github.token }}
 
     steps:
+      - name: Require exact current main workflow identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          remote_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha' | tr -d '\r\n')"
+          test "$GITHUB_SHA" = "$remote_main"
+          runner_temp_posix="$(cygpath -u "$RUNNER_TEMP")"
+          workspace_posix="$(cygpath -u "$GITHUB_WORKSPACE")"
+          github_env_posix="$(cygpath -u "$GITHUB_ENV")"
+          {
+            echo "RUSTDEX_RUNNER_TEMP=$runner_temp_posix"
+            echo "RUSTDEX_WORKSPACE=$workspace_posix"
+            echo "RUSTDEX_MAIN_HEAD_AT_BUILD_START=$remote_main"
+          } >> "$github_env_posix"
+
       - name: Fetch exact source and ancestry
         shell: bash
         run: |
@@ -80,17 +106,52 @@ jobs:
           git checkout --detach "$SOURCE_COMMIT"
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
 
-      - name: Set up Node 24
+      - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24.8.0
+          node-version: ${{ env.RUSTDEX_NODE_VERSION }}
+
+      - name: Install and verify exact npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          npm_tarball="$RUSTDEX_RUNNER_TEMP/npm-$RUSTDEX_NPM_VERSION.tgz"
+          curl --fail --location --retry 3 --output "$npm_tarball" "$RUSTDEX_NPM_TARBALL_URL"
+          test "$(wc -c < "$npm_tarball")" = "$RUSTDEX_NPM_TARBALL_BYTES"
+          echo "$RUSTDEX_NPM_TARBALL_SHA512  $npm_tarball" | sha512sum --check --strict
+          actual_integrity="$(node --input-type=commonjs -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); process.stdout.write(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "$npm_tarball")"
+          test "$actual_integrity" = "$RUSTDEX_NPM_TARBALL_INTEGRITY"
+          npm_prefix="$RUSTDEX_RUNNER_TEMP/npm-toolchain-$RUSTDEX_NPM_VERSION"
+          npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund "$npm_tarball"
+          npm_bin="$npm_prefix"
+          npm_cli_posix="$npm_prefix/node_modules/npm/bin/npm-cli.js"
+          npm_cli_native="$(cygpath -w "$npm_cli_posix")"
+          test -f "$npm_cli_posix"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $npm_cli_posix" | sha256sum --check --strict
+          test "$(node "$npm_cli_native" --version)" = "$RUSTDEX_NPM_VERSION"
+          export PATH="$npm_bin:$PATH"
+          export npm_execpath="$npm_cli_native"
+          github_path_posix="$(cygpath -u "$GITHUB_PATH")"
+          github_env_posix="$(cygpath -u "$GITHUB_ENV")"
+          cygpath -w "$npm_bin" >> "$github_path_posix"
+          {
+            echo "RUSTDEX_NPM_BIN=$npm_bin"
+            echo "RUSTDEX_NPM_CLI_POSIX=$npm_cli_posix"
+            echo "npm_execpath=$npm_cli_native"
+          } >> "$github_env_posix"
+          hash -r
+          test "$(command -v npm)" = "$npm_bin/npm"
+          test "$(command -v npx)" = "$npm_bin/npx"
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          test "$(npm --version)" = "$RUSTDEX_NPM_VERSION"
 
       - name: Verify the complete thin-fork patch
         shell: bash
         run: |
           set -euo pipefail
-          git diff --name-only "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" > "$RUNNER_TEMP/fork-files.txt"
-          cat > "$RUNNER_TEMP/expected-fork-files.txt" <<'EOF'
+          git diff --name-only "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" > "$RUSTDEX_RUNNER_TEMP/fork-files.txt"
+          cat > "$RUSTDEX_RUNNER_TEMP/expected-fork-files.txt" <<'EOF'
           packages/ai/src/api/openai-completions.ts
           packages/ai/src/types.ts
           packages/ai/test/openai-completions-response-model.test.ts
@@ -101,7 +162,7 @@ jobs:
           scripts/rustdex-coding-agent-release.json
           scripts/rustdex-coding-agent-release.test.mjs
           EOF
-          diff -u "$RUNNER_TEMP/expected-fork-files.txt" "$RUNNER_TEMP/fork-files.txt"
+          diff -u "$RUSTDEX_RUNNER_TEMP/expected-fork-files.txt" "$RUSTDEX_RUNNER_TEMP/fork-files.txt"
           git diff --binary --full-index "$UPSTREAM_BASE_COMMIT" "$FORK_COMMIT" -- \
             packages/ai/src/api/openai-completions.ts \
             packages/ai/src/types.ts \
@@ -112,32 +173,41 @@ jobs:
             scripts/build-rustdex-coding-agent-release.mjs \
             scripts/rustdex-coding-agent-release.json \
             scripts/rustdex-coding-agent-release.test.mjs \
-            > "$RUNNER_TEMP/thin-fork.patch"
-          echo "$THIN_FORK_PATCH_SHA256  $RUNNER_TEMP/thin-fork.patch" | sha256sum --check --strict
-          test "$(wc -c < "$RUNNER_TEMP/thin-fork.patch")" = "$THIN_FORK_PATCH_BYTES"
+            > "$RUSTDEX_RUNNER_TEMP/thin-fork.patch"
+          echo "$THIN_FORK_PATCH_SHA256  $RUSTDEX_RUNNER_TEMP/thin-fork.patch" | sha256sum --check --strict
+          test "$(wc -c < "$RUSTDEX_RUNNER_TEMP/thin-fork.patch")" = "$THIN_FORK_PATCH_BYTES"
 
       - name: Install exact monorepo dependencies
         shell: bash
-        run: npm ci
+        run: |
+          set -euo pipefail
+          test "$(command -v npm)" = "$RUSTDEX_NPM_BIN/npm"
+          test "$(command -v npx)" = "$RUSTDEX_NPM_BIN/npx"
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          test "$(npm --version)" = "$RUSTDEX_NPM_VERSION"
+          test -f "$RUSTDEX_NPM_CLI_POSIX"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI_POSIX" | sha256sum --check --strict
+          test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"
+          npm ci
 
       - name: Acquire and inspect pinned upstream model data
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --output "$RUNNER_TEMP/pi-model-data.tar.gz" "$UPSTREAM_MODEL_ARCHIVE_URL"
-          echo "$UPSTREAM_MODEL_ARCHIVE_SHA256  $RUNNER_TEMP/pi-model-data.tar.gz" | sha256sum --check --strict
-          tar -tzf "$RUNNER_TEMP/pi-model-data.tar.gz" > "$RUNNER_TEMP/model-archive-members.txt"
-          if grep -E '(^/|(^|/)\.\.(/|$))' "$RUNNER_TEMP/model-archive-members.txt"; then
+          curl --fail --location --retry 3 --output "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" "$UPSTREAM_MODEL_ARCHIVE_URL"
+          echo "$UPSTREAM_MODEL_ARCHIVE_SHA256  $RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" | sha256sum --check --strict
+          tar -tzf "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" > "$RUSTDEX_RUNNER_TEMP/model-archive-members.txt"
+          if grep -E '(^/|(^|/)\.\.(/|$))' "$RUSTDEX_RUNNER_TEMP/model-archive-members.txt"; then
             echo "unsafe model archive member" >&2
             exit 1
           fi
-          if tar -tvzf "$RUNNER_TEMP/pi-model-data.tar.gz" | awk '{ type=substr($1,1,1); if (type != "-" && type != "d") exit 1 }'; then
+          if tar -tvzf "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" | awk '{ type=substr($1,1,1); if (type != "-" && type != "d") exit 1 }'; then
             :
           else
             echo "model archive contains links or special entries" >&2
             exit 1
           fi
-          if grep -Ev '^pi-0\.84\.3(/|$)' "$RUNNER_TEMP/model-archive-members.txt"; then
+          if grep -Ev '^pi-0\.84\.3(/|$)' "$RUSTDEX_RUNNER_TEMP/model-archive-members.txt"; then
             echo "model archive root differs from the pinned release" >&2
             exit 1
           fi
@@ -146,15 +216,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -f "$RUSTDEX_NPM_CLI_POSIX"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI_POSIX" | sha256sum --check --strict
+          test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"
           if [[ "$BUILD_RELEASE" == "true" ]]; then
-            mkdir -p "$RUNNER_TEMP/release"
+            mkdir -p "$RUSTDEX_RUNNER_TEMP/release"
             node scripts/build-rustdex-coding-agent-release.mjs \
-              --output "$RUNNER_TEMP/release" \
-              --model-data-archive "$RUNNER_TEMP/pi-model-data.tar.gz" \
-              > "$RUNNER_TEMP/build.log" 2>&1
+              --output "$RUSTDEX_RUNNER_TEMP/release" \
+              --model-data-archive "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" \
+              > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1
           else
-            tar -xzf "$RUNNER_TEMP/pi-model-data.tar.gz" --strip-components=1 -C "$GITHUB_WORKSPACE"
-            npm run build:offline > "$RUNNER_TEMP/build.log" 2>&1
+            tar -xzf "$RUSTDEX_RUNNER_TEMP/pi-model-data.tar.gz" --strip-components=1 -C "$RUSTDEX_WORKSPACE"
+            npm run build:offline > "$RUSTDEX_RUNNER_TEMP/build.log" 2>&1
           fi
 
       - name: Run upstream/fork no-interceptor trace
@@ -167,7 +240,7 @@ jobs:
           echo "$TRACE_TEST_SHA256  packages/coding-agent/test/rustdex-qualification-trace.test.ts" | sha256sum --check --strict
           RUSTDEX_TRACE_OUTPUT="$RUNNER_TEMP/no-interceptor-trace.json" \
             npx vitest --run packages/coding-agent/test/rustdex-qualification-trace.test.ts \
-            2>&1 | tee "$RUNNER_TEMP/trace-test.log"
+            2>&1 | tee "$RUSTDEX_RUNNER_TEMP/trace-test.log"
 
       - name: Run dispatch and unchanged-state-machine conformance tests
         if: matrix.runForkTests == 'true'
@@ -182,31 +255,39 @@ jobs:
             packages/coding-agent/test/agent-session-concurrent.test.ts \
             packages/coding-agent/test/suite/regressions/1717-2113-agent-session-event-settlement.test.ts \
             packages/coding-agent/test/suite/regressions/3688-tree-cancel-compacting.test.ts \
-            2>&1 | tee "$RUNNER_TEMP/fork-tests.log"
+            2>&1 | tee "$RUSTDEX_RUNNER_TEMP/fork-tests.log"
           node --test scripts/rustdex-coding-agent-release.test.mjs \
-            2>&1 | tee "$RUNNER_TEMP/release-tests.log"
+            2>&1 | tee "$RUSTDEX_RUNNER_TEMP/release-tests.log"
 
       - name: Verify release package identity
         if: matrix.buildRelease == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          tarball="$RUNNER_TEMP/release/$RELEASE_FILE"
+          tarball="$RUSTDEX_RUNNER_TEMP/release/$RELEASE_FILE"
           test "$(wc -c < "$tarball")" = "$RELEASE_BYTES"
           echo "$RELEASE_SHA256  $tarball" | sha256sum --check --strict
           echo "$RELEASE_SHA512  $tarball" | sha512sum --check --strict
-          mkdir -p "$RUNNER_TEMP/package"
-          tar -tzf "$tarball" > "$RUNNER_TEMP/package-members.txt"
-          if grep -E '(^/|(^|/)\.\.(/|$))' "$RUNNER_TEMP/package-members.txt"; then exit 1; fi
+          mkdir -p "$RUSTDEX_RUNNER_TEMP/package"
+          tar -tzf "$tarball" > "$RUSTDEX_RUNNER_TEMP/package-members.txt"
+          if grep -E '(^/|(^|/)\.\.(/|$))' "$RUSTDEX_RUNNER_TEMP/package-members.txt"; then exit 1; fi
           if ! tar -tvzf "$tarball" | awk '{ type=substr($1,1,1); if (type != "-" && type != "d") exit 1 }'; then exit 1; fi
-          if grep -Ev '^package(/|$)' "$RUNNER_TEMP/package-members.txt"; then exit 1; fi
-          tar -xzf "$tarball" -C "$RUNNER_TEMP/package"
+          if grep -Ev '^package(/|$)' "$RUSTDEX_RUNNER_TEMP/package-members.txt"; then exit 1; fi
+          tar -xzf "$tarball" -C "$RUSTDEX_RUNNER_TEMP/package"
           node --input-type=module <<'NODE'
           import { createHash } from "node:crypto";
           import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
           import { join, relative } from "node:path";
           const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+          const sha512 = (value) => createHash("sha512").update(value).digest("hex");
           const root = join(process.env.RUNNER_TEMP, "package", "package");
+          const archivePath = join(process.env.RUNNER_TEMP, "release", process.env.RELEASE_FILE);
+          const archiveBytes = readFileSync(archivePath);
+          if (
+            archiveBytes.length !== Number(process.env.RELEASE_BYTES)
+            || sha256(archiveBytes) !== process.env.RELEASE_SHA256
+            || sha512(archiveBytes) !== process.env.RELEASE_SHA512
+          ) throw new Error("release archive identity drift");
           const packageBytes = readFileSync(join(root, "package.json"));
           const packageJson = JSON.parse(packageBytes);
           const required = {
@@ -253,9 +334,13 @@ jobs:
           if (contentsHash !== process.env.PACKAGE_CONTENTS_SHA256) throw new Error("package contents drift");
           if (files.length !== Number(process.env.PACKAGE_ENTRY_COUNT)) throw new Error("package entry count drift");
           writeFileSync(join(process.env.RUNNER_TEMP, "package-identity.json"), `${JSON.stringify({
-            schema: "rustdex.pi-package-identity.v1",
+            schema: "rustdex.pi-package-identity.v2",
             packageName: packageJson.name,
             packageVersion: packageJson.version,
+            archiveName: process.env.RELEASE_FILE,
+            archiveBytes: archiveBytes.length,
+            archiveSha256: sha256(archiveBytes),
+            archiveSha512: sha512(archiveBytes),
             packageJsonSha256: sha256(packageBytes),
             shrinkwrapSha256: shrinkwrapHash,
             licenseSha256: licenseHash,
@@ -273,40 +358,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tarball="$RUNNER_TEMP/release/$RELEASE_FILE"
-          consumer_root="$(mktemp -d "$RUNNER_TEMP/rustdex-consumer-${BUILD_VARIANT}-XXXXXX")"
+          tarball="$RUSTDEX_RUNNER_TEMP/release/$RELEASE_FILE"
+          consumer_root="$(mktemp -d "$RUSTDEX_RUNNER_TEMP/rustdex-consumer-${BUILD_VARIANT}-XXXXXX")"
           git show "$GITHUB_SHA":.github/qualification/response-model-observation-consumer.test.mjs \
-            > "$RUNNER_TEMP/response-model-observation-consumer.test.mjs"
-          echo "$RESPONSE_MODEL_TEST_SHA256  $RUNNER_TEMP/response-model-observation-consumer.test.mjs" | sha256sum --check --strict
-          cp "$RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$consumer_root/response-model-observation-consumer.test.mjs"
+            > "$RUSTDEX_RUNNER_TEMP/response-model-observation-consumer.test.mjs"
+          echo "$RESPONSE_MODEL_TEST_SHA256  $RUSTDEX_RUNNER_TEMP/response-model-observation-consumer.test.mjs" | sha256sum --check --strict
+          cp "$RUSTDEX_RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$consumer_root/response-model-observation-consumer.test.mjs"
           cd "$consumer_root"
           npm install --ignore-scripts --package-lock=false --no-audit --no-fund "$tarball" \
-            2>&1 | tee "$RUNNER_TEMP/response-model-consumer-install.log"
+            2>&1 | tee "$RUSTDEX_RUNNER_TEMP/response-model-consumer-install.log"
           node --test response-model-observation-consumer.test.mjs \
-            2>&1 | tee "$RUNNER_TEMP/response-model-consumer.log"
+            2>&1 | tee "$RUSTDEX_RUNNER_TEMP/response-model-consumer.log"
 
       - name: Assemble build evidence
         shell: bash
         run: |
           set -euo pipefail
-          evidence="$RUNNER_TEMP/evidence"
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          test "$(npm --version)" = "$RUSTDEX_NPM_VERSION"
+          test -f "$RUSTDEX_NPM_CLI_POSIX"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI_POSIX" | sha256sum --check --strict
+          test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"
+          evidence="$RUSTDEX_RUNNER_TEMP/evidence"
           mkdir -p "$evidence"
-          cp "$RUNNER_TEMP/thin-fork.patch" "$evidence/thin-fork.patch"
-          cp "$RUNNER_TEMP/no-interceptor-trace.json" "$evidence/no-interceptor-trace.json"
-          cp "$RUNNER_TEMP/build.log" "$evidence/build.log"
-          cp "$RUNNER_TEMP/trace-test.log" "$evidence/trace-test.log"
-          if [[ -f "$RUNNER_TEMP/fork-tests.log" ]]; then cp "$RUNNER_TEMP/fork-tests.log" "$evidence/fork-tests.log"; fi
-          if [[ -f "$RUNNER_TEMP/release-tests.log" ]]; then cp "$RUNNER_TEMP/release-tests.log" "$evidence/release-tests.log"; fi
+          cp "$RUSTDEX_RUNNER_TEMP/thin-fork.patch" "$evidence/thin-fork.patch"
+          cp "$RUSTDEX_RUNNER_TEMP/no-interceptor-trace.json" "$evidence/no-interceptor-trace.json"
+          cp "$RUSTDEX_RUNNER_TEMP/build.log" "$evidence/build.log"
+          cp "$RUSTDEX_RUNNER_TEMP/trace-test.log" "$evidence/trace-test.log"
+          if [[ -f "$RUSTDEX_RUNNER_TEMP/fork-tests.log" ]]; then cp "$RUSTDEX_RUNNER_TEMP/fork-tests.log" "$evidence/fork-tests.log"; fi
+          if [[ -f "$RUSTDEX_RUNNER_TEMP/release-tests.log" ]]; then cp "$RUSTDEX_RUNNER_TEMP/release-tests.log" "$evidence/release-tests.log"; fi
           if [[ "$BUILD_RELEASE" == "true" ]]; then
-            cp "$RUNNER_TEMP/release/$RELEASE_FILE" "$evidence/$RELEASE_FILE"
-            cp "$RUNNER_TEMP/package-identity.json" "$evidence/package-identity.json"
-            cp "$RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$evidence/response-model-observation-consumer.test.mjs"
-            cp "$RUNNER_TEMP/response-model-consumer-install.log" "$evidence/response-model-consumer-install.log"
-            cp "$RUNNER_TEMP/response-model-consumer.log" "$evidence/response-model-consumer.log"
+            cp "$RUSTDEX_RUNNER_TEMP/release/$RELEASE_FILE" "$evidence/$RELEASE_FILE"
+            cp "$RUSTDEX_RUNNER_TEMP/package-identity.json" "$evidence/package-identity.json"
+            cp "$RUSTDEX_RUNNER_TEMP/response-model-observation-consumer.test.mjs" "$evidence/response-model-observation-consumer.test.mjs"
+            cp "$RUSTDEX_RUNNER_TEMP/response-model-consumer-install.log" "$evidence/response-model-consumer-install.log"
+            cp "$RUSTDEX_RUNNER_TEMP/response-model-consumer.log" "$evidence/response-model-consumer.log"
           fi
-          export EVIDENCE_ROOT="$evidence"
-          export NODE_VERSION="$(node --version)"
-          export NPM_VERSION="$(npm --version)"
+          export EVIDENCE_ROOT="$RUNNER_TEMP/evidence"
+          export RUSTDEX_ACTUAL_NODE_VERSION="$(node --version)"
+          export RUSTDEX_ACTUAL_NPM_VERSION="$(npm --version)"
           export PACKAGE_LOCK_SHA256="$(sha256sum package-lock.json | cut -d' ' -f1)"
           node --input-type=module <<'NODE'
           import { createHash } from "node:crypto";
@@ -317,14 +407,29 @@ jobs:
             return existsSync(path) ? createHash("sha256").update(readFileSync(path)).digest("hex") : null;
           };
           const metadata = {
-            schema: "rustdex.pi-fork-build-evidence.v1",
+            schema: "rustdex.pi-fork-build-evidence.v2",
             variant: process.env.BUILD_VARIANT,
             sourceCommit: process.env.SOURCE_COMMIT,
+            workflowSourceCommit: process.env.GITHUB_SHA,
+            workflowRef: process.env.GITHUB_REF,
+            remoteMainAtStart: process.env.RUSTDEX_MAIN_HEAD_AT_BUILD_START,
             upstreamBaseCommit: process.env.UPSTREAM_BASE_COMMIT,
             forkCommit: process.env.FORK_COMMIT,
             runnerImage: `${process.env.ImageOS ?? "unknown"}-${process.env.ImageVersion ?? "unknown"}`,
-            nodeVersion: process.env.NODE_VERSION,
-            npmVersion: process.env.NPM_VERSION,
+            runnerOs: process.env.RUNNER_OS,
+            runnerArch: process.env.RUNNER_ARCH,
+            runnerEnvironment: process.env.RUNNER_ENVIRONMENT,
+            nodeVersion: process.env.RUSTDEX_ACTUAL_NODE_VERSION,
+            npmVersion: process.env.RUSTDEX_ACTUAL_NPM_VERSION,
+            npmInstaller: {
+              packageName: "npm",
+              version: process.env.RUSTDEX_NPM_VERSION,
+              tarballUrl: process.env.RUSTDEX_NPM_TARBALL_URL,
+              integrity: process.env.RUSTDEX_NPM_TARBALL_INTEGRITY,
+              sha512: process.env.RUSTDEX_NPM_TARBALL_SHA512,
+              bytes: Number(process.env.RUSTDEX_NPM_TARBALL_BYTES),
+              cliSha256: process.env.RUSTDEX_NPM_CLI_SHA256,
+            },
             packageLockSha256: process.env.PACKAGE_LOCK_SHA256,
             patchSha256: hash("thin-fork.patch"),
             noInterceptorTraceSha256: hash("no-interceptor-trace.json"),
@@ -364,10 +469,51 @@ jobs:
       GH_TOKEN: ${{ github.token }}
 
     steps:
-      - name: Set up Node 24
+      - name: Require exact current main workflow identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = "workflow_dispatch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          remote_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha' | tr -d '\r\n')"
+          test "$GITHUB_SHA" = "$remote_main"
+          echo "RUSTDEX_MAIN_HEAD_AT_ATTEST_START=$remote_main" >> "$GITHUB_ENV"
+
+      - name: Set up exact Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24.8.0
+          node-version: ${{ env.RUSTDEX_NODE_VERSION }}
+
+      - name: Install and verify exact npm
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          npm_tarball="$RUNNER_TEMP/npm-$RUSTDEX_NPM_VERSION.tgz"
+          curl --fail --location --retry 3 --output "$npm_tarball" "$RUSTDEX_NPM_TARBALL_URL"
+          test "$(wc -c < "$npm_tarball")" = "$RUSTDEX_NPM_TARBALL_BYTES"
+          echo "$RUSTDEX_NPM_TARBALL_SHA512  $npm_tarball" | sha512sum --check --strict
+          actual_integrity="$(node --input-type=commonjs -e 'const { createHash } = require("node:crypto"); const { readFileSync } = require("node:fs"); process.stdout.write(`sha512-${createHash("sha512").update(readFileSync(process.argv[1])).digest("base64")}`)' "$npm_tarball")"
+          test "$actual_integrity" = "$RUSTDEX_NPM_TARBALL_INTEGRITY"
+          npm_prefix="$RUNNER_TEMP/npm-toolchain-$RUSTDEX_NPM_VERSION"
+          npm install --global --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund "$npm_tarball"
+          npm_bin="$npm_prefix/bin"
+          npm_cli="$npm_prefix/lib/node_modules/npm/bin/npm-cli.js"
+          test -f "$npm_cli"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $npm_cli" | sha256sum --check --strict
+          test "$(node "$npm_cli" --version)" = "$RUSTDEX_NPM_VERSION"
+          export PATH="$npm_bin:$PATH"
+          export npm_execpath="$npm_cli"
+          echo "$npm_bin" >> "$GITHUB_PATH"
+          {
+            echo "RUSTDEX_NPM_BIN=$npm_bin"
+            echo "RUSTDEX_NPM_CLI=$npm_cli"
+            echo "npm_execpath=$npm_cli"
+          } >> "$GITHUB_ENV"
+          hash -r
+          test "$(command -v npm)" = "$npm_bin/npm"
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          test "$(npm --version)" = "$RUSTDEX_NPM_VERSION"
 
       - name: Download isolated build evidence
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -458,6 +604,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test "$(command -v npm)" = "$RUSTDEX_NPM_BIN/npm"
+          test "$(node --version)" = "$RUSTDEX_NODE_VERSION_OUTPUT"
+          test "$(npm --version)" = "$RUSTDEX_NPM_VERSION"
+          test -f "$RUSTDEX_NPM_CLI"
+          echo "$RUSTDEX_NPM_CLI_SHA256  $RUSTDEX_NPM_CLI" | sha256sum --check --strict
+          test "$(node "$npm_execpath" --version)" = "$RUSTDEX_NPM_VERSION"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > "$RUNNER_TEMP/run-artifacts.json"
           export BUILD_EVIDENCE_ROOT="$RUNNER_TEMP/build-evidence"
           export RELEASE_EVIDENCE_ROOT="$RUNNER_TEMP/release-evidence"
@@ -469,19 +621,43 @@ jobs:
           import { join } from "node:path";
           const sha256 = (value) => createHash("sha256").update(value).digest("hex");
           const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
+          if (
+            process.env.GITHUB_REF !== "refs/heads/main"
+            || process.env.RUSTDEX_MAIN_HEAD_AT_ATTEST_START !== process.env.GITHUB_SHA
+          ) throw new Error("qualification workflow main-head identity drift");
           const build = (variant) => readJson(join(process.env.BUILD_EVIDENCE_ROOT, `rustdex-qualification-${variant}`, "build-evidence.json"));
           const forkA = build("fork-a");
           const forkB = build("fork-b");
           const upstream = build("upstream");
+          const expectedNpmInstaller = {
+            packageName: "npm",
+            version: process.env.RUSTDEX_NPM_VERSION,
+            tarballUrl: process.env.RUSTDEX_NPM_TARBALL_URL,
+            integrity: process.env.RUSTDEX_NPM_TARBALL_INTEGRITY,
+            sha512: process.env.RUSTDEX_NPM_TARBALL_SHA512,
+            bytes: Number(process.env.RUSTDEX_NPM_TARBALL_BYTES),
+            cliSha256: process.env.RUSTDEX_NPM_CLI_SHA256,
+          };
           for (const [variant, value, commit] of [
             ["fork-a", forkA, process.env.FORK_COMMIT],
             ["fork-b", forkB, process.env.FORK_COMMIT],
             ["upstream", upstream, process.env.UPSTREAM_BASE_COMMIT],
           ]) {
-            if (value.schema !== "rustdex.pi-fork-build-evidence.v1" || value.variant !== variant || value.sourceCommit !== commit || value.result !== "PASS") {
+            if (value.schema !== "rustdex.pi-fork-build-evidence.v2" || value.variant !== variant || value.sourceCommit !== commit || value.result !== "PASS") {
               throw new Error(`invalid build evidence: ${variant}`);
             }
-            if (value.patchSha256 !== process.env.THIN_FORK_PATCH_SHA256 || value.nodeVersion !== "v24.8.0") {
+            if (
+              value.patchSha256 !== process.env.THIN_FORK_PATCH_SHA256
+              || value.workflowSourceCommit !== process.env.GITHUB_SHA
+              || value.workflowRef !== "refs/heads/main"
+              || value.remoteMainAtStart !== process.env.GITHUB_SHA
+              || value.nodeVersion !== process.env.RUSTDEX_NODE_VERSION_OUTPUT
+              || value.npmVersion !== process.env.RUSTDEX_NPM_VERSION
+              || JSON.stringify(value.npmInstaller) !== JSON.stringify(expectedNpmInstaller)
+              || value.runnerOs !== "Windows"
+              || value.runnerArch !== "X64"
+              || value.runnerEnvironment !== "github-hosted"
+            ) {
               throw new Error(`build identity drift: ${variant}`);
             }
           }
@@ -501,7 +677,20 @@ jobs:
           const packageB = readJson(join(process.env.BUILD_EVIDENCE_ROOT, "rustdex-qualification-fork-b", "package-identity.json"));
           if (JSON.stringify(packageA) !== JSON.stringify(packageB)) throw new Error("package identity mismatch");
           if (
-            packageA.responseModelObservationAbi !== "openai-completions-response-model.v1"
+            packageA.schema !== "rustdex.pi-package-identity.v2"
+            || packageA.packageName !== process.env.PACKAGE_NAME
+            || packageA.packageVersion !== process.env.PACKAGE_VERSION
+            || packageA.archiveName !== process.env.RELEASE_FILE
+            || packageA.archiveBytes !== Number(process.env.RELEASE_BYTES)
+            || packageA.archiveSha256 !== process.env.RELEASE_SHA256
+            || packageA.archiveSha512 !== process.env.RELEASE_SHA512
+            || packageA.packageJsonSha256 !== process.env.PACKAGE_JSON_SHA256
+            || packageA.shrinkwrapSha256 !== process.env.PACKAGE_SHRINKWRAP_SHA256
+            || packageA.licenseSha256 !== process.env.LICENSE_SHA256
+            || packageA.packageContentsSha256 !== process.env.PACKAGE_CONTENTS_SHA256
+            || packageA.packageEntryCount !== Number(process.env.PACKAGE_ENTRY_COUNT)
+            || packageA.dispatchGuardAbi !== "model-dispatch-interceptor.v1"
+            || packageA.responseModelObservationAbi !== "openai-completions-response-model.v1"
             || packageA.releaseConfigSha256 !== process.env.RELEASE_CONFIG_SHA256
           ) throw new Error("response-model package identity mismatch");
           const release = readJson(join(process.env.RELEASE_EVIDENCE_ROOT, "release.json"));
@@ -514,12 +703,13 @@ jobs:
           if (runArtifacts.length !== 3 || runArtifacts.some((entry) => entry.expired)) throw new Error("build artifact set is incomplete");
           const releaseAsset = release.assets.find((entry) => entry.name === process.env.RELEASE_FILE);
           const receipt = {
-            schema: "rustdex.pi-fork-qualification-receipt.v1",
+            schema: "rustdex.pi-fork-qualification-receipt.v2",
             workflow: {
               repository: process.env.GITHUB_REPOSITORY,
               path: ".github/workflows/rustdex-coding-agent-qualification.yml",
               sourceCommit: process.env.GITHUB_SHA,
               ref: process.env.GITHUB_REF,
+              mainHeadAtAttestStart: process.env.RUSTDEX_MAIN_HEAD_AT_ATTEST_START,
               sha256: process.env.WORKFLOW_SHA256,
               runId: process.env.GITHUB_RUN_ID,
               runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
@@ -547,6 +737,7 @@ jobs:
               isolatedRunners: 2,
               nodeVersion: forkA.nodeVersion,
               npmVersion: forkA.npmVersion,
+              npmInstaller: expectedNpmInstaller,
               upstreamModelArchiveSha256: process.env.UPSTREAM_MODEL_ARCHIVE_SHA256,
               forkA,
               forkB,

@@ -128,6 +128,66 @@ async function createRuntime(baseUrl) {
 	return { root, cwd, agentDir, runtime, model };
 }
 
+async function createResourceLoader(cwd, agentDir) {
+	const resourceLoader = new DefaultResourceLoader({
+		cwd,
+		agentDir,
+		noExtensions: true,
+		noSkills: true,
+		noPromptTemplates: true,
+		noThemes: true,
+		noContextFiles: true,
+	});
+	await resourceLoader.reload();
+	return resourceLoader;
+}
+
+function createNoRetrySettings() {
+	return SettingsManager.inMemory({
+		retry: {
+			enabled: false,
+			maxRetries: 0,
+			baseDelayMs: 1,
+			provider: { maxRetries: 0 },
+		},
+	});
+}
+
+function createExactDispatchInterceptor(expectedModel, dispatchId, onAfter) {
+	let beforeCalls = 0;
+	let afterCalls = 0;
+	let permittedOptions;
+	return {
+		interceptor: {
+			before: (input) => {
+				beforeCalls += 1;
+				if (
+					beforeCalls !== 1
+					|| input.model !== expectedModel
+					|| input.options.maxRetries !== 0
+				) {
+					return { allow: false, code: "unexpected-dispatch-identity" };
+				}
+				permittedOptions = input.options;
+				return { allow: true, dispatchId, options: input.options };
+			},
+			after: (input) => {
+				afterCalls += 1;
+				assert.equal(input.dispatchId, dispatchId);
+				assert.equal(input.model, expectedModel);
+				assert.equal(input.options, permittedOptions);
+				onAfter(input.message);
+				if (input.message.responseModel !== expectedModel.id) {
+					return { allow: false, code: "response-model-drift" };
+				}
+				return { allow: true };
+			},
+		},
+		beforeCalls: () => beforeCalls,
+		afterCalls: () => afterCalls,
+	};
+}
+
 test("installed root bundle preserves a same-name streamed response model", async () => {
 	const loopback = await listen((response) => {
 		const common = {
@@ -151,33 +211,51 @@ test("installed root bundle preserves a same-name streamed response model", asyn
 		});
 		response.end("data: [DONE]\n\n");
 	});
+	let afterMessage;
 	try {
-		const { runtime, model } = await createRuntime(loopback.baseUrl);
-		const message = await runtime.completeSimple(
+		const { cwd, agentDir, runtime, model } = await createRuntime(loopback.baseUrl);
+		const dispatch = createExactDispatchInterceptor(model, "dispatch-same-name", (message) => {
+			afterMessage = message;
+		});
+		const { session } = await createAgentSession({
+			cwd,
+			agentDir,
+			modelRuntime: runtime,
 			model,
-			{ messages: [{ role: "user", content: "reply", timestamp: 1 }] },
-			{ maxRetries: 0, maxTokens: 128 },
-		);
-		assert.equal(message.model, MODEL);
-		assert.equal(message.responseModel, MODEL);
-		assert.equal(message.stopReason, "stop");
-		assert.equal(message.usage.input, 4);
-		assert.equal(message.usage.output, 2);
+			resourceLoader: await createResourceLoader(cwd, agentDir),
+			sessionManager: SessionManager.inMemory(cwd),
+			settingsManager: createNoRetrySettings(),
+			modelDispatchInterceptor: dispatch.interceptor,
+			noTools: "all",
+		});
+		try {
+			await session.prompt("reply");
+			assert.equal(dispatch.beforeCalls(), 1);
+			assert.equal(dispatch.afterCalls(), 1);
+			assert.ok(afterMessage);
+			assert.equal(afterMessage.model, MODEL);
+			assert.equal(afterMessage.responseModel, MODEL);
+			assert.equal(afterMessage.stopReason, "stop");
+			assert.equal(afterMessage.usage.input, 4);
+			assert.equal(afterMessage.usage.output, 2);
+		} finally {
+			session.dispose();
+		}
 	} finally {
 		await loopback.close();
 	}
 });
 
-test("installed root bundle drains usage after model drift and never executes the requested tool", async () => {
+test("installed root bundle rejects a stable response-model mismatch before tool execution", async () => {
 	const loopback = await listen((response) => {
 		const common = {
 			id: "chatcmpl-drift",
 			object: "chat.completion.chunk",
 			created: 1,
+			model: "unexpected-fallback-model",
 		};
 		writeSse(response, {
 			...common,
-			model: MODEL,
 			choices: [{
 				index: 0,
 				delta: {
@@ -194,30 +272,24 @@ test("installed root bundle drains usage after model drift and never executes th
 		});
 		writeSse(response, {
 			...common,
-			model: "unexpected-fallback-model",
 			choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
 		});
 		writeSse(response, {
 			...common,
-			model: "unexpected-fallback-model",
 			choices: [],
 			usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
 		});
 		response.end("data: [DONE]\n\n");
 	});
 	let executions = 0;
+	let afterMessage;
+	let afterObservedBeforeToolExecution = false;
 	try {
 		const { cwd, agentDir, runtime, model } = await createRuntime(loopback.baseUrl);
-		const resourceLoader = new DefaultResourceLoader({
-			cwd,
-			agentDir,
-			noExtensions: true,
-			noSkills: true,
-			noPromptTemplates: true,
-			noThemes: true,
-			noContextFiles: true,
+		const dispatch = createExactDispatchInterceptor(model, "dispatch-drift", (message) => {
+			afterMessage = message;
+			afterObservedBeforeToolExecution = executions === 0;
 		});
-		await resourceLoader.reload();
 		const danger = defineTool({
 			name: "danger",
 			label: "Danger",
@@ -228,35 +300,41 @@ test("installed root bundle drains usage after model drift and never executes th
 				return { content: [{ type: "text", text: "executed" }], details: {} };
 			},
 		});
-		const settingsManager = SettingsManager.inMemory({
-			retry: {
-				enabled: false,
-				maxRetries: 0,
-				baseDelayMs: 1,
-				provider: { maxRetries: 0 },
-			},
-		});
 		const { session } = await createAgentSession({
 			cwd,
 			agentDir,
 			modelRuntime: runtime,
 			model,
-			resourceLoader,
+			resourceLoader: await createResourceLoader(cwd, agentDir),
 			sessionManager: SessionManager.inMemory(cwd),
-			settingsManager,
+			settingsManager: createNoRetrySettings(),
+			modelDispatchInterceptor: dispatch.interceptor,
 			noTools: "all",
 			tools: ["danger"],
 			customTools: [danger],
 		});
 		try {
 			await session.prompt("call danger");
+			assert.equal(dispatch.beforeCalls(), 1);
+			assert.equal(dispatch.afterCalls(), 1);
+			assert.equal(afterObservedBeforeToolExecution, true);
 			assert.equal(executions, 0);
+			assert.ok(afterMessage);
+			assert.equal(afterMessage.model, MODEL);
+			assert.equal(afterMessage.responseModel, "unexpected-fallback-model");
+			assert.equal(afterMessage.stopReason, "toolUse");
+			assert.equal(afterMessage.usage.input, 11);
+			assert.equal(afterMessage.usage.output, 7);
+			assert.equal(
+				afterMessage.content.some((block) => block.type === "toolCall" && block.name === "danger"),
+				true,
+			);
 			const assistant = session.messages.findLast((message) => message.role === "assistant");
 			assert.ok(assistant);
 			assert.equal(assistant.model, MODEL);
-			assert.equal(assistant.responseModel, MODEL);
-			assert.equal(assistant.stopReason, "error");
-			assert.match(assistant.errorMessage ?? "", /response model changed within the stream/u);
+			assert.equal(assistant.responseModel, "unexpected-fallback-model");
+			assert.equal(assistant.stopReason, "aborted");
+			assert.match(assistant.errorMessage ?? "", /Model dispatch rejected: response-model-drift/u);
 			assert.equal(assistant.usage.input, 11);
 			assert.equal(assistant.usage.output, 7);
 		} finally {

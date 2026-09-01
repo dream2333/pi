@@ -108,8 +108,8 @@ function hydrateModelData(config, archivePath, temporaryRoot) {
 
 function assertSourceIdentity(config) {
 	const head = run("git", ["rev-parse", "HEAD"]).trim();
-	const trackedStatus = run("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
-	if (trackedStatus) throw new Error("Tracked worktree must be clean before building a release");
+	const worktreeStatus = run("git", ["status", "--porcelain"]).trim();
+	if (worktreeStatus) throw new Error("Worktree must be completely clean before building a release");
 	try {
 		run("git", ["merge-base", "--is-ancestor", config.upstreamBaseCommit, head]);
 	} catch {
